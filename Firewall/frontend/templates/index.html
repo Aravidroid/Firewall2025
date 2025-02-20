@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firewall Dashboard</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Navigation Bar --> 
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="#">Firewall Dashboard</a>
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" 
+                aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ml-auto">
+                <li class="nav-item active">
+                    <a class="nav-link" href="#dashboard">Dashboard</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#policies">Policies</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#logs">Logs</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#alerts">Alerts</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Dashboard Section -->
+    <section id="dashboard" class="container my-5">
+        <h2>Dashboard</h2>
+        <p>Welcome to the Firewall Dashboard. Here you can manage policies, view logs, and monitor alerts.</p>
+        
+        <!-- Small Pie Chart -->
+        <div class="my-4">
+            <h4>Traffic Distribution</h4>
+            <div class="chart-container">
+                <canvas id="trafficChart" width="200" height="200"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <!-- Policies Section -->
+    <section id="policies" class="container my-5">
+        <h2>Manage Policies</h2>
+        <!-- Form to add a new policy -->
+        <div class="form-inline mb-3">
+            <input type="text" id="application" placeholder="Application" class="form-control mr-2">
+            <input type="text" id="domain" placeholder="Domain" class="form-control mr-2">
+            <input type="text" id="ip_address" placeholder="IP Address" class="form-control mr-2">
+            <input type="text" id="protocol" placeholder="Protocol" class="form-control mr-2">
+            <button class="btn btn-primary" onclick="addPolicy()">Add New Policy</button>
+        </div>
+
+        <!-- Table for displaying existing policies -->
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Application</th>
+                    <th>Domain</th>
+                    <th>IP Address</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- The policies will be dynamically inserted here -->
+            </tbody>
+        </table>
+    </section>
+
+    <!-- Logs Section -->
+    <section id="logs" class="container my-5">
+        <h2>Network Logs</h2>
+        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Application</th>
+                    <th>Domain</th>
+                    <th>IP Address</th>
+                    <th>Protocol</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+            <tbody></tbody>
+        </table>
+    </div>
+    </section>
+    
+    <!-- Alerts Section -->
+    <section id="alerts" class="container my-5">
+        <h2>Real-Time Alerts</h2>
+        <ul class="list-group"></ul>
+    </section>
+
+    <!-- Modal for editing policies -->
+    <div class="modal fade" id="editPolicyModal" tabindex="-1" aria-labelledby="editPolicyModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editPolicyModalLabel">Edit Policy</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="edit-policy-id">
+                    <div class="form-group">
+                        <label for="edit-application">Application</label>
+                        <input type="text" id="edit-application" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-domain">Domain</label>
+                        <input type="text" id="edit-domain" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-ip-address">IP Address</label>
+                        <input type="text" id="edit-ip-address" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-protocol">Protocol</label>
+                        <input type="text" id="edit-protocol" class="form-control">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="updatePolicy()">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.3/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+
+    <script>
+        let policies = [];
+
+        // Fetch policies, logs, and alerts on page load
+        document.addEventListener("DOMContentLoaded", function() {
+            // Get policies and populate table
+            fetch('/api/policies')
+                .then(response => response.json())
+                .then(data => {
+                    policies = data; // Store policies for edit functionality
+                    const tbody = document.querySelector("#policies tbody");
+                    tbody.innerHTML = "";
+                    let idCounter = 1;
+                    data.forEach(policy => {
+                        tbody.innerHTML += `
+                            <tr>
+                                <td>${policy.application}</td>
+                                <td>${policy.domain}</td>
+                                <td>${policy.ip_address}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary" onclick="editPolicy(${policy.id})">Edit</button>
+                                    <button class="btn btn-sm btn-danger" onclick="deletePolicy(${policy.id})">Delete</button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                });
+
+            // Get logs and populate table
+fetch('/api/logs')
+  .then(response => response.text()) // Expecting plain text instead of JSON
+  .then(logText => {
+    const tbody = document.querySelector("#logs tbody");
+    tbody.innerHTML = "";
+
+    const lines = logText.trim().split('\n'); // Split logs by new lines
+
+    const logRegex = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}) - (.*?) - (.*?) - (.*?) - App:\s*(.*?),\s*IP:\s*(.*?),\s*Protocol:\s*(.*)$/;
+
+    lines.forEach(line => {
+      const match = line.match(logRegex);
+      if (match) {
+        const [, timestamp, processName, level, status, application, ip_address, protocol] = match;
+
+        tbody.innerHTML += `
+          <tr>
+            <td>${timestamp}</td>
+            <td>${application}</td>
+            <td>${processName}</td>
+            <td>${ip_address}</td>
+            <td>${protocol}</td>
+            <td>${status}</td>
+          </tr>
+        `;
+      } else {
+        console.warn("Unrecognized log format:", line);
+      }
+    });
+  })
+  .catch(error => console.error('Error fetching logs:', error));
+
+            // Get alerts and populate list
+            fetch('/api/alerts')
+                .then(response => response.json())
+                .then(data => {
+                    const alertList = document.querySelector("#alerts ul");
+                    alertList.innerHTML = "";
+                    data.forEach(alert => {
+                        alertList.innerHTML += `<li class="list-group-item">${alert}</li>`;
+                    });
+                });
+        });
+
+        // Function to add a new policy
+        function addPolicy() {
+            const newPolicy = {
+                application: document.querySelector("#application").value,
+                domain: document.querySelector("#domain").value,
+                ip_address: document.querySelector("#ip_address").value,
+                protocol: document.querySelector("#protocol").value,
+            };
+
+            // Ensure all fields are filled
+            if (!newPolicy.application || !newPolicy.domain || !newPolicy.ip_address || !newPolicy.protocol) {
+                alert("Please fill out all fields.");
+                return;
+            }
+
+            fetch('/api/policies', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newPolicy)
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                location.reload();
+            })
+            .catch(error => {
+                console.error('Error adding policy:', error);
+            });
+        }
+
+        // Function to delete a policy
+        function deletePolicy(id) {
+            fetch(`/api/policies/${id}`, {
+                method: 'DELETE',
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                location.reload();
+            });
+        }
+
+        // Function to populate the edit modal with a policy's data
+        function editPolicy(id) {
+            const policy = policies.find(policy => policy.id === id);
+            document.querySelector("#edit-policy-id").value = policy.id;
+            document.querySelector("#edit-application").value = policy.application;
+            document.querySelector("#edit-domain").value = policy.domain;
+            document.querySelector("#edit-ip-address").value = policy.ip_address;
+            document.querySelector("#edit-protocol").value = policy.protocol;
+            $('#editPolicyModal').modal('show');
+        }
+
+        // Function to update a policy
+        function updatePolicy() {
+            const id = document.querySelector("#edit-policy-id").value;
+            const updatedPolicy = {
+                application: document.querySelector("#edit-application").value,
+                domain: document.querySelector("#edit-domain").value,
+                ip_address: document.querySelector("#edit-ip-address").value,
+                protocol: document.querySelector("#edit-protocol").value,
+            };
+
+            fetch(`/api/policies/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatedPolicy)
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                location.reload();
+            });
+        }
+    </script>
+</body>
+</html>
