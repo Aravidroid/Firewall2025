@@ -5,7 +5,7 @@ import platform
 import signal
 import requests
 from scapy.all import sniff
-from scapy.layers.inet import IP, TCP, UDP
+from scapy.layers.inet import IP, TCP, UDP, Raw
 import psutil
 import json
 from collections import defaultdict
@@ -15,6 +15,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import os
 import socketio
+import hashlib
+import vt
+import os
 
 # Setup logging
 log_file = "firewall_agent.log"
@@ -25,6 +28,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 API_URL = "http://127.0.0.1:5000"
+VIRUSTOTAL_API_KEY = "84833231e36af6a431704cbc6e7462e4761a7e348c819e82d5ed726b7c17d9ef"
 
 def get_policies():
     try:
@@ -33,7 +37,7 @@ def get_policies():
             return response.json()
     except requests.RequestException as e:
         logging.error(f"Error fetching policies: {e}")
-    return {"whitelist": {}, "blacklist": {}}
+    return {"policies": {}}
 
 policies = get_policies()
 # Cache for process lookup
@@ -126,6 +130,83 @@ def unblock_traffic(app_path, ip_dst=None):
     else:
         logging.error("Unsupported platform for unblocking traffic.")
 
+def get_file_hash(file_path):
+    """Compute SHA256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except Exception as e:
+        logging.error(f"Error computing hash for {file_path}: {e}")
+        return None
+
+def scan_file_virustotal(file_path):
+    """Scan a file using the VirusTotal API."""
+    file_hash = get_file_hash(file_path)
+    if not file_hash:
+        return None
+    
+    try:
+        client = vt.Client(VIRUSTOTAL_API_KEY)
+        response = client.get_object(f"/files/{file_hash}")
+        client.close()
+        
+        if response.last_analysis_stats["malicious"] > 0:
+            logging.warning(f"Malicious file detected: {file_path}")
+            return True
+        else:
+            logging.info(f"File is clean: {file_path}")
+            return False
+    except vt.APIError as e:
+        logging.error(f"VirusTotal API error: {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Error scanning file: {e}")
+        return None
+
+def check_packet_for_malware(packet):
+    """Extract file and check for malware."""
+    if packet.haslayer(TCP) and packet.haslayer(Raw):
+        payload = bytes(packet[Raw])
+        
+        # Save the payload to a temp file
+        temp_file = "temp_payload.bin"
+        with open(temp_file, "wb") as f:
+            f.write(payload)
+        
+        # Scan the file
+        is_malicious = scan_file_virustotal(temp_file)
+        
+        # Delete the temp file
+        os.remove(temp_file)
+        
+        if is_malicious:
+            logging.warning(f"Malicious traffic detected! Blocking associated process.")
+            # Take action (e.g., block process)
+        
+# Modify `packet_callback` to include the malware check
+def packet_callback(packet):
+    """Handle sniffed packets and check for malware."""
+    if packet.haslayer(IP):
+        protocol, sport = None, None
+
+        if packet.haslayer(TCP):
+            protocol = "TCP"
+            sport = packet[TCP].sport
+        elif packet.haslayer(UDP):
+            protocol = "UDP"
+            sport = packet[UDP].sport
+
+        if protocol and sport:
+            app_name, app_path = get_process_by_port(sport)
+            if app_name:
+                enforce_policy(packet, app_name, app_path, protocol)
+
+        # Check for malware
+        check_packet_for_malware(packet)        
+
 
 def log_policy_action(action, app_name, ip_dst, protocol, domain=None):
     """Log policy actions concisely."""
@@ -139,37 +220,22 @@ def enforce_policy(packet, app_name, app_path, protocol):
     ip_dst = packet[IP].dst
     action_taken = None
 
-    if app_name in policies['blacklist']['applications']:
+    if app_name in policies['policies']['applications']:
         block_traffic(app_path)
         action_taken = "blocked"
         log_policy_action(action_taken, app_name, ip_dst, protocol)
-    elif ip_dst in policies['blacklist']['ips']:
+    elif ip_dst in policies['policies']['ips']:
         block_traffic(app_path, ip_dst)
         action_taken = "blocked"
         log_policy_action(action_taken, app_name, ip_dst, protocol)
     else:
         # Check blacklist domains
-        for domain in policies['blacklist']['domains']:
+        for domain in policies['policies']['domains']:
             if ip_dst in resolve_domain_to_ips(domain):
                 block_traffic(app_path, ip_dst)
                 action_taken = "blocked"
                 log_policy_action(action_taken, app_name, ip_dst, protocol, domain)
                 break
-
-    # Handle whitelist - unblocking
-    if app_name in policies['whitelist']['applications']:
-        unblock_traffic(app_path)
-        action_taken = "unblocked"
-        log_policy_action(action_taken, app_name, ip_dst, protocol)
-    elif ip_dst in policies['whitelist']['ips']:
-        unblock_traffic(app_path, ip_dst)
-        action_taken = "unblocked"
-        log_policy_action(action_taken, app_name, ip_dst, protocol)
-
-    if not action_taken:
-        action_taken = "allowed"
-    
-    log_policy_action(action_taken, app_name, ip_dst, protocol)
 
 def packet_callback(packet):
     """Handle sniffed packets."""
